@@ -3430,6 +3430,7 @@ final class AppState {
             snapshot.herdrPaneId = p.herdrPaneId
             snapshot.herdrSocketPath = p.herdrSocketPath
             snapshot.herdrBinaryPath = p.herdrBinaryPath
+            snapshot.claudeDesktopSessionId = p.claudeDesktopSessionId
             snapshot.lastActivity = p.lastActivity
             snapshot.transcriptPath = p.transcriptPath
             snapshot.recap = p.recap
@@ -4687,6 +4688,7 @@ final class AppState {
                 child.herdrPaneId = child.herdrPaneId ?? parent.session.herdrPaneId
                 child.herdrSocketPath = child.herdrSocketPath ?? parent.session.herdrSocketPath
                 child.herdrBinaryPath = child.herdrBinaryPath ?? parent.session.herdrBinaryPath
+                child.claudeDesktopSessionId = child.claudeDesktopSessionId ?? parent.session.claudeDesktopSessionId
                 child.remoteHostId = child.remoteHostId ?? parent.session.remoteHostId
                 child.remoteHostName = child.remoteHostName ?? parent.session.remoteHostName
                 // Keep the child's own process identity only — the parent Cursor chat
