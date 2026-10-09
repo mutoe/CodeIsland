@@ -1400,6 +1400,9 @@ public func reduceEvent(
         if let supersetPane = event.rawJSON["_superset_pane_id"] as? String, !supersetPane.isEmpty {
             sessions[sessionId]?.supersetPaneId = supersetPane
         }
+        if let hostId = claudeDesktopSessionId(in: event) {
+            sessions[sessionId]?.claudeDesktopSessionId = hostId
+        }
         if let env = event.rawJSON["_env"] as? [String: String] {
             applyEnvMetadata(into: &sessions, sessionId: sessionId, env: env)
         }
@@ -1658,6 +1661,20 @@ public func fillMissingParentMetadataFromSubagentEvent(
        let binary = event.rawJSON["_herdr_bin_path"] as? String, !binary.isEmpty {
         sessions[sessionId]?.herdrBinaryPath = binary
     }
+    // A subagent runs inside the parent's CLI, so it carries the same id.
+    if sessions[sessionId]?.claudeDesktopSessionId == nil,
+       let hostId = claudeDesktopSessionId(in: event) {
+        sessions[sessionId]?.claudeDesktopSessionId = hostId
+    }
+}
+
+/// The Claude Desktop Code-tab id the bridge forwarded from
+/// CLAUDE_CODE_HOST_SESSION_ID. Only a well-formed id is kept: it ends up in
+/// a URL on click.
+private func claudeDesktopSessionId(in event: HookEvent) -> String? {
+    guard let hostId = event.rawJSON["_claude_desktop_session"] as? String,
+          ClaudeDesktopCodeSession.isValidHostSessionId(hostId) else { return nil }
+    return hostId
 }
 
 private func shouldReopenCursorSubagentOnPrompt(event: HookEvent, session: SessionSnapshot?) -> Bool {
@@ -1827,11 +1844,9 @@ public func extractMetadata(into sessions: inout [String: SessionSnapshot], sess
         sessions[sessionId]?.orcaWorktreeId = orcaWorktree
     }
     // Claude Desktop Code-tab session id (injected by bridge from
-    // CLAUDE_CODE_HOST_SESSION_ID). Only a well-formed id is kept: it ends up
-    // in a URL on click.
-    if let host = event.rawJSON["_claude_desktop_session"] as? String,
-       ClaudeDesktopCodeSession.isValidHostSessionId(host) {
-        sessions[sessionId]?.claudeDesktopSessionId = host
+    // CLAUDE_CODE_HOST_SESSION_ID).
+    if let hostId = claudeDesktopSessionId(in: event) {
+        sessions[sessionId]?.claudeDesktopSessionId = hostId
     }
     if let remoteHostId = event.rawJSON["_remote_host_id"] as? String, !remoteHostId.isEmpty {
         sessions[sessionId]?.remoteHostId = remoteHostId

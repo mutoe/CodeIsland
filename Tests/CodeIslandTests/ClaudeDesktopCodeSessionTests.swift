@@ -58,6 +58,26 @@ final class ClaudeDesktopCodeSessionTests: XCTestCase {
         XCTAssertEqual(sessions["s"]?.claudeDesktopSessionId, hostId)
     }
 
+    func testHostIdSurvivesSessionStart() throws {
+        // SessionStart rebuilds the card after the common extraction ran, and
+        // it is the first hook every Code-tab session sends (and again after
+        // /clear or a compaction).
+        var sessions: [String: SessionSnapshot] = [:]
+        _ = reduceEvent(sessions: &sessions, event: try makeEvent(["_claude_desktop_session": hostId]), maxHistory: 10)
+        XCTAssertEqual(sessions["s"]?.claudeDesktopSessionId, hostId)
+    }
+
+    func testASubagentHookFillsAParentThatHasNoHostIdYet() throws {
+        // Subagents run inside the same CLI, so they carry the same host id.
+        var sessions: [String: SessionSnapshot] = ["s": SessionSnapshot()]
+        let event = try makeEvent([
+            "hook_event_name": "PreToolUse", "agent_id": "a1", "_claude_desktop_session": hostId,
+        ])
+        XCTAssertNotNil(event.agentId)
+        _ = reduceEvent(sessions: &sessions, event: event, maxHistory: 10)
+        XCTAssertEqual(sessions["s"]?.claudeDesktopSessionId, hostId)
+    }
+
     func testSessionsFileWithoutTheFieldStillDecodes() throws {
         // sessions.json written before the field existed.
         let json = #"[{"sessionId":"s","source":"claude","startTime":"2026-09-28T00:00:00Z","lastActivity":"2026-09-28T00:00:00Z"}]"#
