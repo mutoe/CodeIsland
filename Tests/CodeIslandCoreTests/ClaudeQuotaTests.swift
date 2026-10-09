@@ -232,6 +232,21 @@ final class ClaudeQuotaTests: XCTestCase {
         XCTAssertNil(ClaudeQuotaLimit(kind: .weeklyAll, percent: 30).pace(now: now))
     }
 
+    func testWindowPastItsResetHasNoPaceAndNoSurplus() {
+        // Fetched before the reset, read after it (offline, or before the next
+        // tick): 30% belongs to last week, so "70 pts behind, ≈30% at reset"
+        // and a green surplus ring would both describe a window that is over.
+        let rolledOver = ClaudeQuotaLimit(kind: .weeklyAll, percent: 30, resetsAt: now.addingTimeInterval(-60))
+        XCTAssertTrue(rolledOver.hasReset(now: now))
+        XCTAssertNil(rolledOver.pace(now: now))
+        XCTAssertFalse(ClaudeQuotaSelector.isSurplus(rolledOver, now: now))
+        // A minute before the reset it is still the live window.
+        let live = ClaudeQuotaLimit(kind: .weeklyAll, percent: 30, resetsAt: now.addingTimeInterval(60))
+        XCTAssertFalse(live.hasReset(now: now))
+        XCTAssertNotNil(live.pace(now: now))
+        XCTAssertTrue(ClaudeQuotaSelector.isSurplus(live, now: now))
+    }
+
     func testPaceAheadProjectsExhaustion() throws {
         // 72% used with 3h of 5h left → 40% elapsed → 32pp ahead.
         let limit = ClaudeQuotaLimit(kind: .session, percent: 72, resetsAt: now.addingTimeInterval(3 * 3600))

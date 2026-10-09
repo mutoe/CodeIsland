@@ -45,6 +45,13 @@ public struct ClaudeQuotaLimit: Equatable, Sendable {
         return min(max(elapsed, 0), 1)
     }
 
+    /// The reset time has passed: the window has rolled over since this was
+    /// fetched, so its percent belongs to the previous window.
+    public func hasReset(now: Date = Date()) -> Bool {
+        guard let resetsAt else { return false }
+        return resetsAt <= now
+    }
+
     /// How far ahead of pace this window is: used fraction minus elapsed
     /// fraction. Positive means the limit will be hit before it resets if
     /// usage continues at the same rate. Falls back to the used fraction when
@@ -78,9 +85,10 @@ public struct ClaudeQuotaLimit: Equatable, Sendable {
         public let tone: Tone
     }
 
-    /// Pace readout, or nil without a reset time or this early in the window.
+    /// Pace readout, or nil without a reset time, this early in the window,
+    /// or once the window has reset (the numbers describe the previous one).
     public func pace(now: Date = Date()) -> Pace? {
-        guard resetsAt != nil, let elapsed = elapsedFraction(now: now),
+        guard resetsAt != nil, !hasReset(now: now), let elapsed = elapsedFraction(now: now),
               elapsed >= Self.paceMinElapsed else { return nil }
         let points = percent - elapsed * 100
         let rounded = points.rounded()
@@ -274,9 +282,10 @@ public enum ClaudeQuotaSelector {
 
     /// A weekly window with plenty of budget left late in the week — the
     /// use-it-or-lose-it case. Session windows never count: they reset
-    /// every few hours, so "surplus" is meaningless for them.
+    /// every few hours, so "surplus" is meaningless for them. Nor does a
+    /// window past its reset: its numbers describe the previous week.
     public static func isSurplus(_ limit: ClaudeQuotaLimit, now: Date = Date()) -> Bool {
-        guard limit.kind != .session,
+        guard limit.kind != .session, !limit.hasReset(now: now),
               let elapsed = limit.elapsedFraction(now: now), elapsed >= surplusMinElapsed
         else { return false }
         return limit.paceDelta(now: now) <= -surplusPaceMargin
