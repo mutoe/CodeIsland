@@ -60,7 +60,6 @@ final class ClaudeQuotaMonitorTests: XCTestCase {
         await waitUntil { m.snapshot != nil }
         XCTAssertEqual(m.snapshot, Self.snapshot)
         XCTAssertNil(m.lastError)
-        XCTAssertEqual(m.chipLimit()?.kind, .weeklyScoped)
         // Second expand inside the stale window does not refetch.
         m.noteCollapsed(); m.noteExpanded()
         try? await Task.sleep(nanoseconds: 100_000_000)
@@ -76,7 +75,7 @@ final class ClaudeQuotaMonitorTests: XCTestCase {
         m.noteExpanded(); m.noteStop()
         try? await Task.sleep(nanoseconds: 150_000_000)
         XCTAssertEqual(counter.value, 0)
-        XCTAssertNil(m.chipLimit())
+        XCTAssertNil(m.snapshot)
     }
 
     func testBurstOfStopsCoalescesIntoOneFetch() async {
@@ -106,6 +105,28 @@ final class ClaudeQuotaMonitorTests: XCTestCase {
         m.noteExpanded()
         await waitUntil { counter.value == 1 }
         XCTAssertEqual(counter.value, 1)
+    }
+
+    func testCollapsedChipRefreshesOnStopAndIdleTickUntilTurnedOff() async {
+        // The chip shows the numbers on the collapsed bar: a Stop is served
+        // without the panel opening, and the idle tick keeps catching resets.
+        var config = fastConfig()
+        config.idleFloor = 0.3
+        let counter = Counter()
+        let m = ClaudeQuotaMonitor(scheduler: .init(config: config), defaults: defaults, fetcher: {
+            _ = counter.bump(); return Self.snapshot
+        })
+        m.noteStop()
+        await waitUntil { counter.value == 1 }
+        XCTAssertEqual(counter.value, 1, "a Stop must be fetched while collapsed when the chip is on")
+        await waitUntil { counter.value == 2 }
+        XCTAssertEqual(counter.value, 2, "the idle tick must refresh a collapsed island showing the chip")
+        // Chip off while collapsed: back to main's behaviour, nothing scheduled.
+        defaults.set(ClaudeQuotaChipMode.off.rawValue, forKey: SettingsKey.claudeQuotaChip)
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        let settled = counter.value
+        try? await Task.sleep(nanoseconds: 800_000_000)
+        XCTAssertEqual(counter.value, settled, "turning the chip off must cancel the idle tick")
     }
 
     func testResultLandingAfterDisableIsDropped() async {

@@ -68,12 +68,6 @@ final class ClaudeQuotaMonitor {
     /// Something on screen shows the numbers right now.
     var wantsLive: Bool { isEnabled && (chipVisible || isExpanded) }
 
-    /// Limit for the collapsed chip under the current mode, nil to hide it.
-    func chipLimit(now: Date = Date()) -> ClaudeQuotaLimit? {
-        guard chipVisible, let snapshot else { return nil }
-        return ClaudeQuotaSelector.pick(from: snapshot, mode: chipMode, now: now)
-    }
-
     // MARK: Events
 
     /// A local Claude Code turn finished — its usage is now booked server-side.
