@@ -193,14 +193,20 @@ struct NotchPanelView: View {
     /// Total panel width — adapts based on state and screen geometry
     private var panelWidth: CGFloat {
         let nw = effectiveNotchW
-        let maxWidth = min(620, screenWidth - 40)
         if showIdleIndicator { return idleHovered ? nw + compactWingWidth * 2 + 80 : nw + compactWingWidth * 2 }
         if !isActive { return hasNotch ? nw - 20 : nw }
-        if shouldShowExpanded { return min(max(nw + 200, 580), maxWidth) }
-        let wing = compactWingWidth
+        if shouldShowExpanded { return min(max(nw + 200, 580), maxPanelWidth) }
+        return collapsedBarWidth + quotaReserve.extraWidth
+    }
+
+    /// The panel window's width (PanelWindowController.panelSize).
+    private var maxPanelWidth: CGFloat { min(620, screenWidth - 40) }
+
+    /// The collapsed active bar, before any room for the plan-limit chip.
+    private var collapsedBarWidth: CGFloat {
         // Immediate hover acknowledgement: a slight widen while the expand delay runs
         let prehoverExtra: CGFloat = shouldShowPrehover ? NotchHoverInteraction.prehoverWidthDelta : 0
-        return nw + wing * 2 + collapsedStatusExtra + quotaReserve.extraWidth + prehoverExtra
+        return effectiveNotchW + compactWingWidth * 2 + collapsedStatusExtra + prehoverExtra
     }
 
     /// Status and tool-status reserves, split evenly between the two wings.
@@ -224,7 +230,8 @@ struct NotchPanelView: View {
             mascotSize: mascotSize,
             wing: compactWingWidth,
             statusExtra: collapsedStatusExtra,
-            hasNotch: hasNotch
+            hasNotch: hasNotch,
+            spareWidth: maxPanelWidth - collapsedBarWidth
         )
     }
 
@@ -634,7 +641,12 @@ private struct CompactLeftWing: View {
                     // Plan-limit chip takes the tool slot while no tool is
                     // running: window label + ring + percent, all windows in
                     // the tooltip.
-                    QuotaChip(limit: limit, snapshot: snapshot, stale: appState.claudeQuota.lastError != nil)
+                    QuotaChip(
+                        limit: limit,
+                        snapshot: snapshot,
+                        stale: appState.claudeQuota.lastError != nil,
+                        showsPace: QuotaChip.paceFits(mascotSize: mascotSize)
+                    )
                         .fixedSize()
                         .background(GeometryReader { geo in
                             Color.clear.preference(key: QuotaChipWidthKey.self, value: geo.size.width)
@@ -2363,15 +2375,23 @@ enum QuotaChipLayout {
     ///   - wing: base width of each wing (`compactWingWidth`).
     ///   - statusExtra: the status / tool-status reserves the bar already
     ///     splits between both wings; half of it is left-wing room.
+    ///   - spareWidth: how much wider the bar can get before it runs past
+    ///     the panel window (window width minus the bar without the chip).
     static func reserve(
         chipWidth: CGFloat,
         mascotSize: CGFloat,
         wing: CGFloat,
         statusExtra: CGFloat,
-        hasNotch: Bool
+        hasNotch: Bool,
+        spareWidth: CGFloat = .infinity
     ) -> Reserve {
         // No notch to clear: the flexible row just needs the chip's width.
-        guard hasNotch else { return Reserve(extraWidth: chipWidth + wingSpacing, shift: 0) }
+        // On a wide external display at a large width scale with tool status
+        // on, that can run past the window; capped, the centre tool status
+        // (or the spacer) gives up the difference instead.
+        guard hasNotch else {
+            return Reserve(extraWidth: Swift.min(chipWidth + wingSpacing, Swift.max(0, spareWidth)), shift: 0)
+        }
         let needed = wingLeading + mascotSize + wingSpacing + chipWidth + notchGap
         let room = wing + statusExtra / 2
         let missing = Swift.max(0, needed - room)
@@ -2414,18 +2434,37 @@ struct QuotaChip: View {
     let limit: ClaudeQuotaLimit
     let snapshot: ClaudeQuotaSnapshot
     let stale: Bool
+    /// Whether the pace mark has room under the percent (see `paceFits`).
+    let showsPace: Bool
     @ObservedObject private var l10n = L10n.shared
+
+    /// Longest window label the chip shows. A model-scoped window is named by
+    /// the server, and a long display name would push the bar past the panel
+    /// window; the tooltip still shows it in full.
+    static let maxLabelLength = 8
+
+    /// The pace mark hangs under the percent, inside a wing as tall as the
+    /// mascot. Below this mascot size (a menu-bar-height bar, ≈25pt) there is
+    /// no room for it and it would be cut in half; the tooltip still has it.
+    static func paceFits(mascotSize: CGFloat) -> Bool { mascotSize >= 24 }
+
+    static func label(for limit: ClaudeQuotaLimit, l10n: L10n) -> String {
+        let full = QuotaStyle.label(limit, l10n: l10n)
+        guard full.count > maxLabelLength else { return full }
+        return full.prefix(maxLabelLength - 1).trimmingCharacters(in: .whitespaces) + "…"
+    }
 
     /// First-frame guess at the chip's width before it is measured: ring and
     /// percent plus the window label (10pt monospaced ≈ 6.2pt per glyph).
     static func estimatedWidth(for limit: ClaudeQuotaLimit) -> CGFloat {
-        38 + CGFloat(QuotaStyle.label(limit, l10n: L10n.shared).count) * 6.2
+        38 + CGFloat(label(for: limit, l10n: L10n.shared).count) * 6.2
     }
 
-    init(limit: ClaudeQuotaLimit, snapshot: ClaudeQuotaSnapshot, stale: Bool) {
+    init(limit: ClaudeQuotaLimit, snapshot: ClaudeQuotaSnapshot, stale: Bool, showsPace: Bool) {
         self.limit = limit
         self.snapshot = snapshot
         self.stale = stale
+        self.showsPace = showsPace
     }
 
     /// Shared resolution for the chip's limit so the bar width and the wing
@@ -2446,7 +2485,7 @@ struct QuotaChip: View {
         let color = QuotaStyle.color(limit)
         return HStack(spacing: 3) {
             // Which window this is: 5h / week / model name.
-            Text(QuotaStyle.label(limit, l10n: l10n))
+            Text(Self.label(for: limit, l10n: l10n))
                 .font(.system(size: 10, weight: .medium, design: .monospaced))
                 .foregroundStyle(.white.opacity(0.5))
                 .lineLimit(1)
@@ -2461,7 +2500,7 @@ struct QuotaChip: View {
             Text(ClaudeQuotaFormat.percent(limit.percent))
                 .font(.system(size: 10, weight: .semibold, design: .monospaced))
                 .foregroundStyle(color)
-                .modifier(QuotaPaceMark(pace: limit.pace(now: now)))
+                .modifier(QuotaPaceMark(pace: showsPace ? limit.pace(now: now) : nil))
         }
         .opacity(stale ? 0.55 : 1)
         .help(QuotaStyle.tooltip(snapshot, stale: stale, l10n: l10n, now: now))
