@@ -125,6 +125,14 @@ final class AppState {
     }
     var questionQueue: [QuestionRequest] = [] {
         didSet {
+            // A close lasts as long as its request: once answered, skipped or
+            // drained, its id is forgotten.
+            if !dismissedQuestionIds.isEmpty {
+                let queued = Set(questionQueue.map(\.id))
+                if !dismissedQuestionIds.isSubset(of: queued) {
+                    dismissedQuestionIds.formIntersection(queued)
+                }
+            }
             followUps.waitingChanged()
             PushNotifier.shared.requestsChanged()
         }
@@ -451,23 +459,35 @@ final class AppState {
     /// these are keyed by request, not session: a new question from the same
     /// session is a new thing to see. Hidden, never resolved — the agent keeps
     /// waiting, and the collapsed bar's question badge reopens the card.
-    private var dismissedQuestionIds: Set<UUID> = [] {
+    private(set) var dismissedQuestionIds: Set<UUID> = [] {
         didSet { followUps.waitingChanged() }
     }
 
-    /// The first queued question the user has not closed — what may open by
-    /// itself, and what a question shortcut acts on.
-    var nextVisibleQuestion: QuestionRequest? {
-        questionQueue.first { !dismissedQuestionIds.contains($0.id) }
+    /// The question each session's card shows — its first queued one — in
+    /// queue order, for the sessions whose card the user has not closed. That
+    /// first question decides: a later one from the same session (a
+    /// subagent's) waits behind a closed card instead of reopening it on the
+    /// question the user just put away.
+    private var visibleQuestionCards: [QuestionRequest] {
+        var seen = Set<String>()
+        return questionQueue.filter { request in
+            seen.insert(request.event.sessionId ?? "default").inserted
+                && !dismissedQuestionIds.contains(request.id)
+        }
     }
 
-    /// Question counterpart of `visiblePermissionRequestIds`: closed questions
-    /// are left out, so follow-up reminders stop for a card the user put away.
+    /// The first question whose card the user has not closed — what may open
+    /// by itself, and what a question shortcut acts on.
+    var nextVisibleQuestion: QuestionRequest? {
+        visibleQuestionCards.first
+    }
+
+    /// Question counterpart of `visiblePermissionRequestIds`: closed cards are
+    /// left out, so follow-up reminders stop for a card the user put away.
     var pendingQuestionRequestIds: [String: String] {
         var ids: [String: String] = [:]
-        for request in questionQueue where !dismissedQuestionIds.contains(request.id) {
-            let sid = request.event.sessionId ?? "default"
-            if ids[sid] == nil { ids[sid] = request.id.uuidString }
+        for request in visibleQuestionCards {
+            ids[request.event.sessionId ?? "default"] = request.id.uuidString
         }
         return ids
     }
@@ -1415,7 +1435,8 @@ final class AppState {
     /// Session of a queued question the island is not showing — what the
     /// collapsed bar's question badge advertises and a click opens.
     var hiddenPendingQuestionSessionId: String? {
-        guard let head = questionQueue.first else { return nil }
+        // A question still waiting to be seen comes before one the user closed.
+        guard let head = nextVisibleQuestion ?? questionQueue.first else { return nil }
         if case .questionCard = surface { return nil }
         return head.event.sessionId ?? "default"
     }
@@ -2420,7 +2441,10 @@ final class AppState {
         questionQueue.append(request)
         pushQuestionQueued(request, sessionId: sessionId, smartSuppressed: !shouldAutoOpenPendingSurface(for: sessionId))
 
-        if questionQueue.count == 1 {
+        // First of a burst: nothing else visibly waiting. Not `count == 1` —
+        // a closed question stays queued, and must not swallow every later
+        // question's card and sound (the trap #309 fixed for approvals).
+        if nextVisibleQuestion?.id == request.id {
             activeSessionId = sessionId
             if Self.autoExpandOnQuestion(), shouldAutoOpenPendingSurface(for: sessionId) {
                 withAnimation(NotchAnimation.open) {
@@ -2556,7 +2580,8 @@ final class AppState {
             )
         )
 
-        if questionQueue.count == 1 {
+        // First of a burst, as in `handleQuestion`.
+        if nextVisibleQuestion?.id == request.id {
             activeSessionId = sessionId
             if Self.autoExpandOnQuestion(), shouldAutoOpenQuestionSurface(for: event) {
                 withAnimation(NotchAnimation.open) {
@@ -2807,11 +2832,7 @@ final class AppState {
             }
             return
         }
-        // Forget closes whose requests have since left the queue.
-        let queued = Set(questionQueue.map(\.id))
-        dismissedQuestionIds = dismissedQuestionIds
-            .union([questionQueue[index].id])
-            .intersection(queued)
+        dismissedQuestionIds.insert(questionQueue[index].id)
 
         if case .questionCard = surface {
             withAnimation(NotchAnimation.close) {
