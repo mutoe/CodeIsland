@@ -44,6 +44,11 @@ final class ClaudeQuotaMonitor {
                 Task { @MainActor in self?.reschedule() }
             })
         }
+        // Launch: with the collapsed chip on, the numbers are on screen from
+        // the start, so the first fetch is due now rather than at the first
+        // Stop, expand or settings write. With the chip off (or the setting
+        // off) `wantsLive` is false and nothing is scheduled, as before.
+        reschedule()
     }
 
     deinit {
